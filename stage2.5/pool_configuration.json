@@ -1,0 +1,23 @@
+{
+  "pool_1": [
+    "/index.php"
+  ],
+  "pool_2": [
+    "/vendor/tecnickcom/tcpdf/tcpdf_import.php"
+  ],
+  "pool_3": [
+    "/vendor/phpseclib/phpseclib/phpseclib/Crypt/Rijndael.php"
+  ],
+  "pool_4": [
+    "/vendor/twig/twig/src/ExpressionParser.php"
+  ],
+  "pool_5": [
+    "/vendor/pragmarx/google2fa/tests/Google2FATest.php"
+  ],
+  "pool_6": [
+    "/vendor/pragmarx/google2fa/src/Support/Base32.php"
+  ],
+  "pool_7_default": [
+    "/vendor/twig/twig/lib/Twig/TokenParser/AutoEscape.php"
+  ]
+}
