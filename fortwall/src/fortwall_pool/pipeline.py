@@ -75,7 +75,10 @@ def build_pool_plan(
     )
 
     result = clustering.run_clustering(new_categories, num_clusters)
-    diagnostics.extend(clustering.diagnostics_lines(result))
+    # Number the clustered pools starting after the dedicated high-share pools so
+    # the ΔSP/ΔSN diagnostic labels line up with the 0-based "Cluster <i> SP%"
+    # lines that report.py parses (dedicated pools occupy indices 0..len-1).
+    diagnostics.extend(clustering.diagnostics_lines(result, first_pool_number=len(cat_indices)))
 
     # url_analysis's own extra diagnostics.
     for cid in result.cluster_urls:

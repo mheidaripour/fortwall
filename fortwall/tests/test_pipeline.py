@@ -1,3 +1,5 @@
+import re
+
 import pytest
 
 from fortwall_pool import pipeline
@@ -58,3 +60,29 @@ def test_analyze_report_lines_have_parseable_tokens(tmp_path):
     assert "Cluster 0 SP%:" in text
     assert "STATISTICS FOR THE SYSFILTER" in text
     assert "SP% " in text
+
+
+def test_report_delta_sn_is_nonzero_and_aligned(tmp_path):
+    # One dominant (dedicated) category + small categories to cluster; /f forces
+    # syscall 59 (sensitive) into a pool that other members didn't need.
+    lines = [f"/big{i} 1 2 3" for i in range(50)]
+    for url, nums in [("/a", "1 4"), ("/b", "1 5"), ("/c", "2 6"),
+                      ("/d", "2 7"), ("/e", "8 9"), ("/f", "8 10 59")]:
+        lines.append(f"{url} {nums}")
+    f = tmp_path / "stage2_out_app"
+    f.write_text("\n".join(lines) + "\n")
+
+    out = "\n".join(pipeline.analyze_report_lines(f, num_clusters=2, sensitive=[59]))
+
+    sp_pools = {int(n) for n in re.findall(r"Cluster (\d+) SP%", out)}
+    delta = {
+        int(n): float(p)
+        for n, p in re.findall(
+            r"Cluster (\d+): Max syscalls to add.*?Max of sensitive syscalls: ([0-9.]+)%", out
+        )
+    }
+    assert delta, "expected per-pool delta diagnostic lines"
+    # Fix #1: the merged sensitive syscall produces a non-zero ΔSN (was always 0).
+    assert any(p > 0 for p in delta.values())
+    # Fix #2: every pool with a ΔSN line shares its number with an SP% line (aligned).
+    assert set(delta).issubset(sp_pools)

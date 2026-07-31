@@ -98,13 +98,24 @@ renderers reproduce the committed reference artifacts exactly.
 
 ## Preserved quirks (intentional, for parity)
 
-Behavior-preserving refactor — two latent quirks in the original are kept and
+Behavior-preserving refactor — one latent quirk in the original is kept and
 documented rather than "fixed", so output stays identical:
 
 1. **www.conf `pm.max_children`** is not rewritten (the original condition
    lacked a trailing newline); the per-pool configs do rewrite it.
-2. The clustering **"Max of sensitive syscalls"** diagnostic always prints
-   `0.00%` (the original intersected an int set with a string-keyed dict).
 
-If you'd like either turned into a real fix, that's a small follow-up.
+### Fixed bugs (diverges from the original on purpose)
+
+- **Clustering "Max of sensitive syscalls" (ΔSN)** — the original intersected an
+  int set with a string-keyed dict, so ΔSN was always `0.00%`. Now
+  `clustering.diagnostics_lines()` uses the sensitive syscall *numbers*, so ΔSN
+  reflects how many sensitive syscalls a pool actually adds to a member URL
+  (e.g. up to 40–45% on some pools).
+- **Report cluster-index misalignment** — the SP/SN lines were 0-based over all
+  pools while the ΔSP/ΔSN diagnostics were 1-based over clustered pools only, so
+  the corrected ΔSN landed in the wrong table row (and the first clustered
+  pool's value was dropped into the hardcoded-zero "Category 1" row).
+  `pipeline.build_pool_plan` now numbers the clustered pools starting after the
+  dedicated pools (`first_pool_number`), so ΔSP/ΔSN align with SP/SN in the
+  report table.
 ```

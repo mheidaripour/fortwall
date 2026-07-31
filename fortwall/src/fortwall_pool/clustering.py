@@ -12,7 +12,7 @@ A backward-compatible :func:`cluster` wrapper returns the original
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List, Sequence, Set
+from typing import Dict, Iterable, List, Optional, Sequence, Set
 
 import numpy as np
 from scipy.spatial.distance import pdist, squareform
@@ -107,14 +107,36 @@ def run_clustering(categorized_urls: Categorized, num_clusters: int = 5) -> Clus
     )
 
 
-def diagnostics_lines(result: ClusterResult) -> List[str]:
+def diagnostics_lines(
+    result: ClusterResult,
+    sensitive_syscalls: Optional[Iterable[int]] = None,
+    first_pool_number: int = 1,
+) -> List[str]:
     """Reproduce the diagnostic stdout the original ``cluster.py`` printed.
 
-    ``report.py`` parses some of these lines. Preserved quirk: the original
-    intersects an *int* difference set with the classification *dict* (whose
-    keys are strings), so the "Max of sensitive syscalls" figure is always
-    0.00%. That behavior is retained here.
+    ``report.py`` parses some of these lines.
+
+    ``sensitive_syscalls`` is the set of sensitive syscall *numbers* used for the
+    "Max of sensitive syscalls" (ΔSN) figure. If omitted, it is loaded from
+    :data:`config.WORK.syscall_table`.
+
+    ``first_pool_number`` is the label of the first clustered pool. The original
+    numbered clusters 1-based (default ``1``). When the clustered pools follow a
+    set of dedicated high-share pools in an overall layout, pass the number of
+    dedicated pools so these labels line up with the 0-based ``Cluster <i>``
+    SP/SN lines the report also parses (see ``pipeline.build_pool_plan``).
+
+    Note: the original ``cluster.py`` intersected the int difference set with the
+    classification *dict* (string keys), so ΔSN was always 0.00%. That bug is
+    fixed here -- ΔSN now reflects how many sensitive syscalls a pool actually
+    adds to a member URL's allow-list.
     """
+    if sensitive_syscalls is None:
+        try:
+            sensitive_syscalls = syscalls_mod.load_sensitive_syscalls(config.WORK.syscall_table)
+        except OSError:
+            sensitive_syscalls = []
+    sensitive_set: Set[int] = set(sensitive_syscalls)
     lines: List[str] = []
     supersets = result.supersets
     num_clusters = result.num_clusters
@@ -127,27 +149,25 @@ def diagnostics_lines(result: ClusterResult) -> List[str]:
 
     for cluster_id in range(num_clusters):
         cluster_sets = [data[i] for i in range(len(data)) if labels[i] == cluster_id]
-        lines.append(f"Cluster {cluster_id + 1}: {len(cluster_sets)} sets")
+        lines.append(f"Cluster {first_pool_number + cluster_id}: {len(cluster_sets)} sets")
 
     for cluster_id in range(num_clusters):
-        lines.append(f"Cluster {cluster_id + 1}: {len(result.cluster_urls[cluster_id])} urls")
+        lines.append(f"Cluster {first_pool_number + cluster_id}: {len(result.cluster_urls[cluster_id])} urls")
 
     for cluster_id in range(num_clusters):
         cluster_sets = [data[i] for i in range(len(data)) if labels[i] == cluster_id]
         sizes = [len(group) for group in cluster_sets]
-        lines.append(f"Cluster {cluster_id + 1} standard deviation: {round(np.std(sizes), 1)}")
+        lines.append(f"Cluster {first_pool_number + cluster_id} standard deviation: {round(np.std(sizes), 1)}")
 
-    # Preserved quirk: intersecting with the classification dict yields 0.
-    sensitive_classification = syscalls_mod.parse_syscall_classifications()
     for cluster_id in range(num_clusters):
         cluster_sets = [data[i] for i in range(len(data)) if labels[i] == cluster_id]
         superset = supersets[cluster_id]
         max_sn_syscalls = max(
-            len((superset - group).intersection(sensitive_classification)) for group in cluster_sets
+            len((superset - group) & sensitive_set) for group in cluster_sets
         )
         max_difference = max(len(superset - group) for group in cluster_sets)
         lines.append(
-            f"Cluster {cluster_id + 1}: Max syscalls to add to any set: "
+            f"Cluster {first_pool_number + cluster_id}: Max syscalls to add to any set: "
             f"{(max_difference / config.TOTAL_SYSCALLS) * 100:.2f}% of total syscalls, "
             f"Max of sensitive syscalls: {(max_sn_syscalls / config.SN_BASE) * 100:.2f}% of sensitive syscalls"
         )

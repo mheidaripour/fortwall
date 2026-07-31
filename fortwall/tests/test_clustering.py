@@ -39,11 +39,23 @@ def test_cluster_wrapper_matches_run_clustering():
     assert cluster_urls == result.cluster_urls
 
 
-def test_diagnostics_lines_shape_and_quirk():
+def test_diagnostics_lines_shape():
     result = clustering.run_clustering(_categorized(), num_clusters=2)
-    lines = clustering.diagnostics_lines(result)
+    lines = clustering.diagnostics_lines(result, sensitive_syscalls=[])
     text = "\n".join(lines)
     assert "Superset 1:" in text
     assert "Cluster 1:" in text
-    # Preserved quirk: sensitive-syscall figure is always 0.00%.
+    # No sensitive syscalls supplied -> 0.00%.
     assert "Max of sensitive syscalls: 0.00% of sensitive syscalls" in text
+
+
+def test_diagnostics_delta_sn_reflects_sensitive_syscalls():
+    # Pooling /a with /b forces syscall 59 (execve, sensitive) into /a's allow-list.
+    cats = [
+        {"associated_numbers": [1, 2], "urls": ["/a"]},
+        {"associated_numbers": [1, 2, 59], "urls": ["/b"]},
+    ]
+    result = clustering.run_clustering(cats, num_clusters=1)
+    text = "\n".join(clustering.diagnostics_lines(result, sensitive_syscalls=[59]))
+    # 1 sensitive syscall added out of SN_BASE=20 -> 5.00%  (was always 0.00% before the fix)
+    assert "Max of sensitive syscalls: 5.00% of sensitive syscalls" in text
