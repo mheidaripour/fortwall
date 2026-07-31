@@ -1,0 +1,160 @@
+"""Cluster URL syscall-sets into pools via Jaccard distance + agglomerative clustering.
+
+Ported from the original ``cluster.py``. The heavy computation is exposed as a
+pure function (:func:`run_clustering`) returning a :class:`ClusterResult`; the
+diagnostic text the original printed to stdout (and that ``report.py`` parses)
+is reproduced separately by :func:`diagnostics_lines`.
+
+A backward-compatible :func:`cluster` wrapper returns the original
+``(supersets, cluster_urls, clusters_syscalls)`` triple.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Dict, List, Sequence, Set
+
+import numpy as np
+from scipy.spatial.distance import pdist, squareform
+from sklearn.cluster import AgglomerativeClustering
+
+from . import config, syscalls as syscalls_mod
+
+# A "categorized url" is the loose dict form produced by urlmap:
+#   {"associated_numbers": [int, ...], "urls": [str, ...]}
+Categorized = Sequence[Dict[str, list]]
+
+
+@dataclass
+class ClusterResult:
+    """Structured output of :func:`run_clustering`."""
+
+    num_clusters: int
+    labels: np.ndarray                      # cluster id per input group
+    data: List[Set[int]]                    # syscall set per input group
+    supersets: List[Set[int]]               # union of syscalls per cluster
+    cluster_urls: Dict[int, List[str]]      # urls per cluster
+    clusters_syscalls: Dict[int, List[Set[int]]]  # member syscall-sets per cluster
+
+    def as_tuple(self):
+        """Return the legacy ``(supersets, cluster_urls, clusters_syscalls)`` triple."""
+        return self.supersets, self.cluster_urls, self.clusters_syscalls
+
+
+def _to_binary_matrix(data: List[Set[int]]):
+    """One-hot encode the syscall sets over their universal set of elements."""
+    universal_set = set().union(*data)
+    element_to_index = {element: idx for idx, element in enumerate(universal_set)}
+    binary_data = np.zeros((len(data), len(universal_set)), dtype=int)
+    for i, s in enumerate(data):
+        for element in s:
+            if element in element_to_index:
+                binary_data[i, element_to_index[element]] = 1
+    return binary_data
+
+
+def run_clustering(categorized_urls: Categorized, num_clusters: int = 5) -> ClusterResult:
+    """Cluster the categorized URL groups into ``num_clusters`` pools.
+
+    Uses Jaccard distance over one-hot syscall vectors and agglomerative
+    clustering with average linkage -- identical to the original implementation
+    (the deprecated ``affinity=`` kwarg is spelled ``metric=`` for modern
+    scikit-learn; the semantics are unchanged).
+    """
+    data: List[Set[int]] = [set(group["associated_numbers"]) for group in categorized_urls]
+
+    binary_data = _to_binary_matrix(data)
+
+    jaccard_distances = pdist(binary_data, metric="jaccard")
+    jaccard_dist_matrix = squareform(jaccard_distances)
+
+    clustering_model = AgglomerativeClustering(
+        n_clusters=num_clusters, metric="precomputed", linkage="average"
+    )
+    cluster_labels = clustering_model.fit_predict(jaccard_dist_matrix)
+
+    # Superset (union) of syscalls per cluster.
+    supersets: List[Set[int]] = []
+    for cluster_id in range(num_clusters):
+        cluster_sets = [data[i] for i in range(len(data)) if cluster_labels[i] == cluster_id]
+        supersets.append(set().union(*cluster_sets))
+
+    # Member syscall-sets per cluster.
+    clusters_syscalls: Dict[int, List[Set[int]]] = {}
+    for cluster_id in range(num_clusters):
+        clusters_syscalls[cluster_id] = [
+            data[i] for i in range(len(data)) if cluster_labels[i] == cluster_id
+        ]
+
+    # URLs per cluster (matches original set-equality lookup, quirks preserved).
+    cluster_urls: Dict[int, List[str]] = {}
+    for cluster_id in range(num_clusters):
+        cluster_sets = clusters_syscalls[cluster_id]
+        urls: List[str] = []
+        for cset in cluster_sets:
+            for group in categorized_urls:
+                if set(group["associated_numbers"]) == cset:
+                    urls.extend(group["urls"])
+        cluster_urls[cluster_id] = urls
+
+    return ClusterResult(
+        num_clusters=num_clusters,
+        labels=cluster_labels,
+        data=data,
+        supersets=supersets,
+        cluster_urls=cluster_urls,
+        clusters_syscalls=clusters_syscalls,
+    )
+
+
+def diagnostics_lines(result: ClusterResult) -> List[str]:
+    """Reproduce the diagnostic stdout the original ``cluster.py`` printed.
+
+    ``report.py`` parses some of these lines. Preserved quirk: the original
+    intersects an *int* difference set with the classification *dict* (whose
+    keys are strings), so the "Max of sensitive syscalls" figure is always
+    0.00%. That behavior is retained here.
+    """
+    lines: List[str] = []
+    supersets = result.supersets
+    num_clusters = result.num_clusters
+    data = result.data
+    labels = result.labels
+
+    for i, superset in enumerate(supersets, start=1):
+        lines.append(f"Superset {i}: {superset}")
+        lines.append(f"length of the superset: {len(superset)}")
+
+    for cluster_id in range(num_clusters):
+        cluster_sets = [data[i] for i in range(len(data)) if labels[i] == cluster_id]
+        lines.append(f"Cluster {cluster_id + 1}: {len(cluster_sets)} sets")
+
+    for cluster_id in range(num_clusters):
+        lines.append(f"Cluster {cluster_id + 1}: {len(result.cluster_urls[cluster_id])} urls")
+
+    for cluster_id in range(num_clusters):
+        cluster_sets = [data[i] for i in range(len(data)) if labels[i] == cluster_id]
+        sizes = [len(group) for group in cluster_sets]
+        lines.append(f"Cluster {cluster_id + 1} standard deviation: {round(np.std(sizes), 1)}")
+
+    # Preserved quirk: intersecting with the classification dict yields 0.
+    sensitive_classification = syscalls_mod.parse_syscall_classifications()
+    for cluster_id in range(num_clusters):
+        cluster_sets = [data[i] for i in range(len(data)) if labels[i] == cluster_id]
+        superset = supersets[cluster_id]
+        max_sn_syscalls = max(
+            len((superset - group).intersection(sensitive_classification)) for group in cluster_sets
+        )
+        max_difference = max(len(superset - group) for group in cluster_sets)
+        lines.append(
+            f"Cluster {cluster_id + 1}: Max syscalls to add to any set: "
+            f"{(max_difference / config.TOTAL_SYSCALLS) * 100:.2f}% of total syscalls, "
+            f"Max of sensitive syscalls: {(max_sn_syscalls / config.SN_BASE) * 100:.2f}% of sensitive syscalls"
+        )
+
+    return lines
+
+
+def cluster(categorized_urls: Categorized, num_clusters: int = 5):
+    """Backward-compatible wrapper: returns ``(supersets, cluster_urls, clusters_syscalls)``."""
+    return run_clustering(categorized_urls, num_clusters).as_tuple()
