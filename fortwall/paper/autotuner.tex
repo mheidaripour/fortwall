@@ -1,0 +1,163 @@
+% =====================================================================
+% FortWall auto-tuner: system-design subsection + experiments subsection.
+% Drop \input{autotuner} after the clustering section (design) and in the
+% evaluation section (experiments), or copy the two \subsection blocks.
+%
+% Required packages: amsmath, booktabs, algorithm, algpseudocode (algorithmicx).
+% Metric symbols (SP, SN, TOTAL, SN_BASE) are assumed defined in the metrics
+% section (§5.3); this file reuses them and introduces ASP = 100 - SP.
+% =====================================================================
+
+% ---------------------------------------------------------------------
+% SYSTEM DESIGN: place immediately AFTER the clustering subsection.
+% ---------------------------------------------------------------------
+\subsection{Automated Pool-Count Selection}
+\label{sec:autotuner}
+
+The clustering of Section~\ref{sec:clustering} consolidates per-script profiles
+into $k$ pools, but leaves $k$ as a free operator parameter. Choosing $k$ is a
+genuine trade-off: too few pools inflate each script's allow-list toward the
+global union, widening the attack surface, whereas too many pools fragment a
+fixed worker/memory budget and degrade tail latency. We therefore reframe the
+choice of $k$ as a \emph{constrained optimization} that FortWall solves
+automatically.
+
+\paragraph{Formulation.}
+Let each distinct script profile $c$ (a Stage~2 category) have minimal syscall
+set $s_c$ and traffic weight $w_c$, the number of URLs mapped to it. A pooling
+into $k$ pools assigns $c$ to a pool whose \emph{effective} policy is the union
+of its members restored with the global intersection baseline,
+\begin{equation}
+P(c) \;=\; \Big(\textstyle\bigcup_{c'\in \mathrm{pool}(c)} s_{c'}\Big) \;\cup\; I,
+\qquad P(c)\supseteq s_c,
+\end{equation}
+where $I$ is the intersection every pool inherits. Reusing the metrics of
+Section~\ref{sec:metrics}, we score a pooling with the request-weighted
+\emph{attack-surface percentage}
+\begin{equation}
+\mathrm{ASP}(k) \;=\; 100 - \mathrm{SP}(k),
+\qquad
+\mathrm{SP}(k) \;=\; \frac{\sum_c w_c\,\big(\mathrm{TOTAL}-|P(c)|\big)/\mathrm{TOTAL}}{\sum_c w_c}\cdot 100,
+\end{equation}
+i.e.\ ASP is simply the complement of the blocked-syscall share SP, weighted by
+traffic. The worst-case inflation from pooling is measured exactly as
+$\Delta\mathrm{SP}$ and $\Delta\mathrm{SN}$ in Section~\ref{sec:metrics}:
+\begin{equation}
+\Delta\mathrm{SP}(k)=\max_c \frac{|P(c)\setminus s_c|}{\mathrm{TOTAL}}\cdot 100,
+\qquad
+\Delta\mathrm{SN}(k)=\max_c \frac{|(P(c)\setminus s_c)\cap \mathrm{SN}|}{\mathrm{SN\_BASE}}\cdot 100 .
+\end{equation}
+FortWall selects $k$ by
+\begin{equation}
+\min_{k}\ \mathrm{ASP}(k)
+\quad\text{s.t.}\quad
+\Delta\mathrm{SN}(k)\le \tau,\ \ k\le K,
+\label{eq:autotune}
+\end{equation}
+where $K$ is the pool budget (bounded by memory and worker fragmentation, not by
+CPU cores: pools are sets of worker processes, so pool count does not by itself
+determine scheduling pressure) and $\tau$ is an optional cap on the worst-case
+sensitive-syscall inflation an operator will tolerate.
+
+\paragraph{Solver.}
+Minimizing $\sum_j |P_j|$ over $k$-partitions is NP-hard (it is a union-cost /
+correlation-clustering objective), so we do not search partitions directly;
+instead we treat the agglomerative clustering of Section~\ref{sec:clustering} as
+a fixed heuristic solver and tune only its single parameter $k$.
+$\mathrm{ASP}(k)$ is monotonically non-increasing in $k$ --- more pools yield
+tighter unions --- decreasing from the single-pool global union toward the
+Saphire per-script ideal, but with sharply diminishing returns. FortWall sweeps
+$k$ over the feasible range, discards points violating the $\tau$ constraint, and
+selects the \emph{knee} of the $\mathrm{ASP}(k)$ curve: the smallest $k$ that
+captures most of the surface reduction. We detect the knee with the standard
+maximum-distance-to-chord (Kneedle) rule, which requires no additional
+parameters. Algorithm~\ref{alg:autotune} summarizes the procedure.
+
+\begin{algorithm}[t]
+\caption{Auto-tuning the pool count $k$}
+\label{alg:autotune}
+\begin{algorithmic}[1]
+\Require profiles $\{(s_c,w_c)\}$, sensitive set $\mathrm{SN}$, budget $K$, cap $\tau$
+\Ensure recommended pool count $k^\star$
+\State $\mathcal{F}\gets\emptyset$
+\For{$k \gets k_{\min}$ \textbf{to} $K$}
+  \State build pooling with $k$ pools (dedicated high-share $+$ clustered)
+  \State compute $\mathrm{ASP}(k),\ \Delta\mathrm{SN}(k)$ via Eq.~(2)--(4)
+  \If{pooling is well-defined \textbf{and} $\Delta\mathrm{SN}(k)\le\tau$}
+     \State $\mathcal{F}\gets\mathcal{F}\cup\{k\}$
+  \EndIf
+\EndFor
+\State \Return $k^\star \gets \textsc{Knee}\big(\{(k,\mathrm{ASP}(k)):k\in\mathcal{F}\}\big)$
+\end{algorithmic}
+\end{algorithm}
+
+The sweep is offline and inexpensive: each candidate $k$ reuses the existing
+Stage~2 pool-planning pass, so tuning costs $O(K)$ clustering runs and no
+additional profiling. If the returned $k^\star$ equals $K$, the budget --- rather
+than the security objective --- is the binding constraint, which FortWall reports
+as a signal to raise $K$.
+
+% ---------------------------------------------------------------------
+% EXPERIMENTS: place in the evaluation section, after the clustering /
+% metrics results and before (or alongside) the runtime results.
+% ---------------------------------------------------------------------
+\subsection{Auto-Tuner Evaluation}
+\label{sec:eval-autotuner}
+
+We evaluate the auto-tuner offline on the committed Stage~2 profiles, with pool
+budget $K=12$ and no sensitive cap ($\tau=\infty$) unless stated. This isolates
+the security objective; the runtime consequences of the selected $k$ are studied
+in Section~\ref{sec:eval-autotuner-runtime}.
+
+\paragraph{Selected pool counts.}
+Table~\ref{tab:autotune} reports, per application, the pool count $k^\star$ that
+FortWall selects and its scores at that point. Across all applications the
+auto-tuner settles on a \emph{small} budget ($k^\star\in[5,8]$), well below the
+ceiling $K=12$: the security objective, not the budget, is binding in every case.
+The knee is pronounced --- expanding to the largest feasible budget reduces ASP
+by at most $0.5$ percentage points beyond $k^\star$, confirming that a handful of
+pools recovers nearly all of the attack-surface benefit of per-script filtering.
+
+\begin{table}[t]
+\centering
+\caption{Auto-tuner selection per application ($K=12$, $\tau=\infty$).
+$k^\star$ is the selected pool count; SP/ASP/$\Delta$SN follow
+Section~\ref{sec:metrics}. ASP $=100-$SP.}
+\label{tab:autotune}
+\begin{tabular}{lccccc}
+\toprule
+Application & $k^\star$ & SP\% & ASP\% & $\Delta$SN\% & budget binding? \\
+\midrule
+WordPress   & 7 & 83.4 & 16.6 & 45.0 & no \\
+Drupal      & 7 & 88.4 & 11.6 & 25.0 & no \\
+Joomla      & 8 & 75.5 & 24.5 & 50.0 & no \\
+phpMyAdmin  & 8 & 83.4 & 16.6 & 40.0 & no \\
+Moodle      & 5 & 78.5 & 21.5 & 45.0 & no \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Metric consistency.}
+The $\Delta\mathrm{SN}$ values the auto-tuner reports are computed with the same
+worst-case definition as Section~\ref{sec:metrics} and agree with the per-pool
+$\Delta\mathrm{SN}$ figures reported there (e.g.\ up to $45\%$ on WordPress),
+confirming ASP and $\Delta\mathrm{SN}$ are the existing metrics re-expressed, not
+new quantities.
+
+\paragraph{Effect of the sensitive constraint.}
+Tightening $\tau$ shifts the selection toward larger $k$, which splits pools more
+finely and lowers worst-case sensitive inflation. On WordPress, for instance,
+imposing $\tau=40\%$ renders the $k^\star=7$ solution infeasible
+($\Delta\mathrm{SN}=45\%$) and moves the recommendation to $k=10$
+($\Delta\mathrm{SN}=35\%$) at a negligible ASP cost. The knob thus lets an
+operator trade a few extra pools for a hard bound on sensitive-syscall exposure.
+
+\paragraph{Runtime validation.}
+\label{sec:eval-autotuner-runtime}
+% TODO (runtime, on native x86_64 host): overlay the ASP(k) curve with the
+% measured latency-vs-k curve from the pooling benchmark on a twin-axis plot,
+% marking both the security knee and the performance knee, to show that k^\star
+% also lies in the latency-optimal region. Report throughput/p99 at k^\star vs
+% Saphire and default. Placeholder pending native-x86_64 measurements.
+\emph{[To be added: combined security/performance Pareto and latency at
+$k^\star$; pending native-x86\_64 runtime measurements.]}

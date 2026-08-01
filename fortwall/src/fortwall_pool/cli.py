@@ -17,7 +17,7 @@ import logging
 import sys
 from typing import List, Optional
 
-from . import config, metrics, pipeline, report, syscalls, urlmap
+from . import autotune, config, metrics, pipeline, report, syscalls, urlmap
 from .deploy import modes
 from .deploy.system import Deployer
 
@@ -68,6 +68,24 @@ def cmd_switch(args) -> int:
     return 0
 
 
+def cmd_autotune(args) -> int:
+    """Auto-select the pool count k by constrained optimization (§ auto-tuner)."""
+    sensitive = syscalls.load_sensitive_syscalls(args.syscall_table)
+    res = autotune.tune(
+        _resolve_file(args),
+        sensitive,
+        budget_k=args.max_pools,
+        tau=args.tau,
+        k_min=args.min_pools,
+    )
+    for line in autotune.format_lines(res):
+        print(line)
+    if args.plot:
+        autotune.plot(res, args.plot)
+        print(f"\nwrote figure to {args.plot}")
+    return 0 if res.recommended_k is not None else 1
+
+
 def cmd_report(args) -> int:
     report.main([args.file] if args.file else [])
     return 0
@@ -99,6 +117,17 @@ def build_parser() -> argparse.ArgumentParser:
     p_switch.add_argument("-p", "--pools_num", type=int, default=config.DEFAULT_NUM_POOLS)
     p_switch.add_argument("--dry-run", action="store_true", help="record actions without applying")
     p_switch.set_defaults(func=cmd_switch)
+
+    p_auto = sub.add_parser("autotune",
+                            help="constrained-optimization: auto-select pool count k")
+    add_common(p_auto)
+    p_auto.add_argument("-K", "--max-pools", type=int, default=config.DEFAULT_NUM_POOLS,
+                        help="pool budget K (hard upper bound on k)")
+    p_auto.add_argument("--min-pools", type=int, default=2, help="smallest k to evaluate")
+    p_auto.add_argument("--tau", type=float, default=None,
+                        help="sensitive budget: ΔSN%% (worst-case) <= tau percent, e.g. 40")
+    p_auto.add_argument("--plot", help="write the width-vs-k figure to this path")
+    p_auto.set_defaults(func=cmd_autotune)
 
     p_report = sub.add_parser("report", help="turn analysis output into LaTeX/Markdown tables")
     p_report.add_argument("file", nargs="?", help="analysis text file (stdin if omitted)")

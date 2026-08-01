@@ -1,0 +1,20 @@
+% Design-faithful build-up (avg across apps). Per-script and exact-match
+% categorization are security-equivalent (ideal surface); clustering to k*
+% trades a small surface rise for far fewer pools. cluster-all@k* vs
+% full-method@k* isolates Phase I at matched k.
+\begin{table}[t]
+\centering
+\caption{Pipeline build-up. Per-script filtering and exact-match categorization achieve the same (ideal) attack surface; categorization is a lossless reduction in filter count. Clustering to $k^\star$ trades a small, bounded surface increase for far fewer pools; excluding high-share categories first (Phase~I) lowers the surface at matched $k^\star$.}
+\label{tab:buildup}
+\begin{tabular}{lccccc}
+\toprule
+Configuration & \#pools & SP\% & ASP\% & $\Delta$SP\% & $\Delta$SN\% \\
+\midrule
+Saphire (per-script filters) & 2698 & 83.3 & 16.7 & 0.0 & 0.0 \\
+Exact-match categorization (lossless dedup) & 73 & 83.3 & 16.7 & 0.0 & 0.0 \\
+Cluster to k* WITHOUT Phase I (no exclusion) & 7 & 81.1 & 18.9 & 18.7 & 38.0 \\
+Full method: Phase I + II to k* & 7 & 81.8 & 18.2 & 19.4 & 41.0 \\
+Single global-union pool & 1 & 69.6 & 30.4 & 21.4 & 45.0 \\
+\bottomrule
+\end{tabular}
+\end{table}

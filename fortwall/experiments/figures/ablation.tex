@@ -1,0 +1,26 @@
+% Clustering ablation (averaged across apps, scored at each app's k*).
+% Lower ASP%/dSP%/dSN%/meanASP is better. ΔvsFull is ASP% minus the full method.
+\begin{table}[t]
+\centering
+\caption{Clustering ablation: one design axis changed at a time from the full FortWall method, scored in the paper metrics (averaged across applications at each app's auto-tuned $k^\star$). Lower is better; $\Delta$vsFull is the ASP\% change relative to the full method.}
+\label{tab:ablation}
+\begin{tabular}{llccccc}
+\toprule
+Variant & Axis & SP\% & ASP\% & $\Delta$SP\% & $\Delta$SN\% & $\Delta$vsFull \\
+\midrule
+full-method$\star$ & baseline & 81.8 & 18.2 & 19.4 & 41.0 & +0.0 \\
+kmeans & algorithm & 82.1 & 17.9 & 10.5 & 22.0 & -0.3 \\
+spectral & algorithm & 81.8 & 18.2 & 20.0 & 44.0 & +0.0 \\
+greedy-union & algorithm & 80.9 & 19.1 & 18.6 & 41.0 & +0.9 \\
+random-partition & algorithm & 81.2 & 18.8 & 19.7 & 44.3 & +0.6 \\
+cosine & distance & 81.0 & 19.0 & 20.8 & 45.0 & +0.9 \\
+hamming & distance & 81.9 & 18.1 & 11.3 & 23.0 & -0.1 \\
+overlap & distance & 80.9 & 19.1 & 19.8 & 44.0 & +0.9 \\
+complete & linkage & 82.0 & 18.0 & 19.6 & 37.0 & -0.1 \\
+single & linkage & 80.9 & 19.1 & 20.4 & 44.0 & +0.9 \\
+ward & linkage & 82.2 & 17.8 & 10.2 & 21.0 & -0.4 \\
+no-two-phase & structure & 81.1 & 18.9 & 18.7 & 38.0 & +0.7 \\
+no-intersection-sub & structure & 82.1 & 17.9 & 10.4 & 17.0 & -0.3 \\
+\bottomrule
+\end{tabular}
+\end{table}

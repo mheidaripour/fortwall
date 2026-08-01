@@ -1,9 +1,5 @@
 """Cluster URL syscall-sets into pools via Jaccard distance + agglomerative clustering.
 
-Ported from the original ``cluster.py``. The heavy computation is exposed as a
-pure function (:func:`run_clustering`) returning a :class:`ClusterResult`; the
-diagnostic text the original printed to stdout (and that ``report.py`` parses)
-is reproduced separately by :func:`diagnostics_lines`.
 
 A backward-compatible :func:`cluster` wrapper returns the original
 ``(supersets, cluster_urls, clusters_syscalls)`` triple.
