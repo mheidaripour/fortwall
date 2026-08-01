@@ -1,11 +1,13 @@
 # fortwall
 
 A least-privilege deployment layer for PHP applications, built on top of the
-**Saphire** syscall-profiling pipeline. fortwall clusters an application's URLs
-by their syscall footprint into a small set of php-fpm pools and enforces a
-tailored allow-list per pool (via nginx routing + per-pool seccomp), as an
-alternative to Saphire's single global filter — and measures the resulting
-attack-surface reduction.
+**Saphire** syscall-profiling pipeline. Saphire (Bulekov et al., USENIX 2021)
+derives a seccomp-BPF allow-list per **PHP script** but must restart the
+interpreter whenever it serves a script with a different filter. fortwall
+consumes those per-script profiles and consolidates them into a small set of
+php-fpm **pools** — each a long-lived worker enforcing one union allow-list (via
+nginx routing + per-pool seccomp) — removing Saphire's per-request restart while
+measuring the resulting attack-surface reduction.
 
 ## Repository layout (two layers + a data contract)
 
