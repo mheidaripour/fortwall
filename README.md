@@ -31,8 +31,7 @@ fortwall/                # this repo
 
 **Why this shape:** fortwall is a *sibling alternative* to Saphire's stage3, not
 a later stage — its only dependency on Saphire is the `stage2_out_*` data in
-`artifacts/`. Keeping Saphire vendored and pristine (not renumbered) preserves
-attribution and the ability to diff/update against upstream. See
+`artifacts/`. See
 [`saphire/UPSTREAM.md`](saphire/UPSTREAM.md).
 
 ## Quick start
